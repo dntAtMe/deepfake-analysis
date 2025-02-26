@@ -27,7 +27,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     device: str,
     epoch: int,
-    global_step: int,
+    step_count: int,
     log_wandb: bool = False,
     log_interval: int = 10
 ) -> Tuple[float, float, dict, int]:
@@ -56,7 +56,7 @@ def train_epoch(
             
             total_loss += loss.item()
             step += 1
-            global_step += 1
+            step_count += 1
             
             # Calculate running metrics
             predictions = torch.cat(all_predictions)
@@ -77,17 +77,17 @@ def train_epoch(
             # Log to wandb every log_interval steps
             if log_wandb and step % log_interval == 0:
                 batch_metrics = {
-                    f"train/{epoch}/step_loss": loss.item(),
-                    f"train/{epoch}/step_accuracy": accuracy,
-                    f"train/{epoch}/step_eer": metrics["eer"],
-                    f"train/{epoch}/step_auc": metrics["auc"],
-                    "epoch": epoch,
+                    "train/step_loss": loss.item(),
+                    "train/step_accuracy": accuracy,
+                    "train/step_eer": metrics["eer"],
+                    "train/step_auc": metrics["auc"],
+                    "epoch": epoch + 1,  # Log current epoch
                     "step": step,
-                    "global_step": global_step,
+                    "global_step": step_count,
                 }
-                wandb.log(batch_metrics, step=global_step)
+                wandb.log(batch_metrics, step=step_count)
     
-    return total_loss / len(loader), accuracy, metrics, global_step
+    return total_loss / len(loader), accuracy, metrics, step_count
 
 def validate(
     model: nn.Module,
@@ -95,7 +95,7 @@ def validate(
     criterion: nn.Module,
     device: str,
     epoch: int,
-    global_step: int,
+    step_count: int,
     log_wandb: bool = False,
     log_interval: int = 10
 ) -> Tuple[float, float, dict]:
@@ -140,29 +140,29 @@ def validate(
                 # Log to wandb every log_interval steps
                 if log_wandb and step % log_interval == 0:
                     batch_metrics = {
-                        f"val/{epoch}/step_loss": loss.item(),
-                        f"val/{epoch}/step_accuracy": accuracy,
-                        f"val/{epoch}/step_eer": metrics["eer"],
-                        f"val/{epoch}/step_auc": metrics["auc"],
-                        "epoch": epoch,
+                        "val/step_loss": loss.item(),
+                        "val/step_accuracy": accuracy,
+                        "val/step_eer": metrics["eer"],
+                        "val/step_auc": metrics["auc"],
+                        "epoch": epoch + 1,  # Log current epoch
                         "step": step,
-                        "global_step": global_step + step,
+                        "val_step": step_count + step,
                     }
-                    wandb.log(batch_metrics, step=global_step + step)
+                    wandb.log(batch_metrics, step=step_count + step)
     
     return total_loss / len(loader), accuracy, metrics
 
 def get_model(model_name: str, device: str, input_type: str = "spectrogram"):
     """Get model and its configuration based on name."""
-    if model_name == "specrnet":
+    if (model_name == "specrnet"):
         config = get_specrnet_config()
         model = SpecRNet(config, device=device)
         num_classes = config.nb_classes
-    elif model_name == "resnet":
+    elif (model_name == "resnet"):
         config = get_resnet_config(input_type=input_type)
         model = ResNet2(config, device=device, input_type=input_type)
         num_classes = config.nb_classes
-    elif model_name == "cnn":
+    elif (model_name == "cnn"):
         config = get_cnn_config()
         model = BaselineCNN(config)
         num_classes = config.num_classes  # Different attribute name
@@ -203,8 +203,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
-    parser.add_argument("--wandb-project", type=str, default="deepfakes",
-                       help="Weights & Biases project name")
+    parser.add_argument("--wandb-project", type=str, default="deepfake-detection",
+                       help="Weights & Biases project name (defaults to model name)")
     parser.add_argument("--wandb-entity", type=str, default=None,
                        help="Weights & Biases entity (username or team)")
     parser.add_argument("--disable-wandb", action="store_true",
@@ -227,12 +227,14 @@ def main():
     print(f"\nUsing device: {device}")
     print(f"Selected model: {args.model}")
     
-    # Initialize wandb if not disabled
+    wandb_project = args.wandb_project
+    
     run = None
     if not args.disable_wandb:
         run = wandb.init(
-            project=args.wandb_project,
+            project=wandb_project,
             entity=args.wandb_entity,
+            name=f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             config={
                 "model": args.model,
                 "input_type": args.input_type,
@@ -309,15 +311,15 @@ def main():
     model, config, num_classes = get_model(args.model, device, input_type=args.input_type)
     model = model.to(device)
     
+    # Now log model architecture AFTER model is created
+    if args.model == "specrnet" and run is not None:
+        wandb.config.update({"model_config": config.__dict__})
+    
     print("\nModel configuration:")
     print(f"Architecture: {args.model}")
     print(f"Input type: {args.input_type}")
     print(f"Number of classes: {num_classes}")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Log model architecture
-    if args.model == "specrnet" and run is not None:
-        wandb.config.update({"model_config": config.__dict__})
     
     # Setup training
     criterion = nn.CrossEntropyLoss()
@@ -332,52 +334,40 @@ def main():
     }
     
     print(f"\nStarting training on {device}...")
-    global_step = 0
+    step_count = 0
     
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
         
         # Train
-        train_loss, train_acc, train_metrics, global_step = train_epoch(
+        train_loss, train_acc, train_metrics, step_count = train_epoch(
             model, train_loader, criterion, optimizer, device, 
-            epoch, global_step, log_wandb=(run is not None), 
+            epoch, step_count, log_wandb=(run is not None), 
             log_interval=args.log_interval
         )
         
         # Validate with metrics
         val_loss, val_acc, val_metrics = validate(
             model, val_loader, criterion, device, 
-            epoch, global_step, log_wandb=(run is not None),
+            epoch, step_count, log_wandb=(run is not None),
             log_interval=args.log_interval
         )
         
         # Log epoch summary metrics to wandb
         if run is not None:
             wandb.log({
-                "epoch": epoch,
-                f"train/{epoch}/loss": train_loss,
-                f"train/{epoch}/accuracy": train_acc,
-                f"train/{epoch}/eer": train_metrics["eer"],
-                f"train/{epoch}/auc": train_metrics["auc"],
-                f"val/{epoch}/loss": val_loss,
-                f"val/{epoch}/accuracy": val_acc,
-                f"val/{epoch}/eer": val_metrics["eer"],
-                f"val/{epoch}/auc": val_metrics["auc"],
+                "epoch": epoch + 1,
+                "train/epoch_loss": train_loss,
+                "train/epoch_accuracy": train_acc,
+                "train/epoch_eer": train_metrics["eer"],
+                "train/epoch_auc": train_metrics["auc"],
+                "val/epoch_loss": val_loss,
+                "val/epoch_accuracy": val_acc,
+                "val/epoch_eer": val_metrics["eer"],
+                "val/epoch_auc": val_metrics["auc"],
                 "learning_rate": optimizer.param_groups[0]['lr'],
-                "global_step": global_step
-            }, step=global_step)
-            
-            # Also log to standard metrics for comparison across runs
-            wandb.log({
-                "train/loss": train_loss,
-                "train/accuracy": train_acc,
-                "train/eer": train_metrics["eer"],
-                "train/auc": train_metrics["auc"],
-                "val/loss": val_loss,
-                "val/accuracy": val_acc,
-                "val/eer": val_metrics["eer"],
-                "val/auc": val_metrics["auc"],
-            }, step=global_step)
+                "global_step": step_count
+            }, step=step_count)
         
         # Update learning rate
         scheduler.step(val_loss)
@@ -402,6 +392,30 @@ def main():
             # Full checkpoint path with extension
             checkpoint_path = save_dir / f"{checkpoint_base}.pt"
             
+            # Create checkpoint dictionary with detailed information
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'metrics': {
+                    'best': best_metrics,
+                    'current': {
+                        'train_loss': train_loss,
+                        'train_acc': train_acc,
+                        'val_loss': val_loss,
+                        'val_acc': val_acc,
+                        'eer': val_metrics['eer'],
+                        'auc': val_metrics['auc']
+                    }
+                },
+                'config': config,
+                'model_name': args.model,
+                'input_type': args.input_type,
+                'training_args': vars(args),
+                'timestamp': time.strftime("%Y%m%d-%H%M%S")
+            }
+            
             # Save weights
             torch.save(checkpoint, checkpoint_path)
             
@@ -420,9 +434,9 @@ def main():
             # Log best model to wandb
             if run is not None:
                 artifact = wandb.Artifact(
-                    name=f"model-{run.id}",
+                    name=f"model-{run.id}-epoch-{epoch+1}",
                     type="model",
-                    description=f"Best model from run {run.id}"
+                    description=f"Best model from epoch {epoch+1}"
                 )
                 # Use the full path with extension
                 artifact.add_file(str(checkpoint_path))
@@ -433,7 +447,7 @@ def main():
                     "best_val_acc": val_acc,
                     "best_val_eer": val_metrics['eer'],
                     "best_val_auc": val_metrics['auc'],
-                    "best_epoch": epoch
+                    "best_epoch": epoch + 1
                 })
         
         # Print results
@@ -447,7 +461,7 @@ def main():
     
     # Finish wandb run
     if run is not None:
-        wandb.finish()
+        run.finish()
 
 if __name__ == "__main__":
     main()

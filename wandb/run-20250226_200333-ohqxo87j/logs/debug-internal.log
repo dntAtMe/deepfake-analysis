@@ -1,7 +1,0 @@
-{"time":"2025-02-26T20:03:33.658325+01:00","level":"INFO","msg":"stream: starting","core version":"0.19.7","symlink path":"E:\\PWr\\deepfakes\\wandb\\run-20250226_200333-ohqxo87j\\logs\\debug-core.log"}
-{"time":"2025-02-26T20:03:33.8143571+01:00","level":"INFO","msg":"created new stream","id":"ohqxo87j"}
-{"time":"2025-02-26T20:03:33.8143571+01:00","level":"INFO","msg":"stream: started","id":"ohqxo87j"}
-{"time":"2025-02-26T20:03:33.8143571+01:00","level":"INFO","msg":"writer: Do: started","stream_id":"ohqxo87j"}
-{"time":"2025-02-26T20:03:33.8143571+01:00","level":"INFO","msg":"handler: started","stream_id":"ohqxo87j"}
-{"time":"2025-02-26T20:03:33.8143571+01:00","level":"INFO","msg":"sender: started","stream_id":"ohqxo87j"}
-{"time":"2025-02-26T20:03:34.0784051+01:00","level":"INFO","msg":"Starting system monitor"}
