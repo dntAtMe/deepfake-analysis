@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
+import wandb
+from datetime import datetime
 
 from models.resnet2 import ResNet2, get_default_config as get_resnet_config
 from models.specrnet import SpecRNet, get_default_config as get_specrnet_config
@@ -23,13 +25,18 @@ def train_epoch(
     loader: DataLoader,
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
-    device: str
-) -> Tuple[float, float, dict]:
+    device: str,
+    epoch: int,
+    global_step: int,
+    log_wandb: bool = False,
+    log_interval: int = 10
+) -> Tuple[float, float, dict, int]:
     """Train for one epoch."""
     model.train()
     total_loss = 0
     all_predictions = []
     all_labels = []
+    step = 0
     
     with tqdm(loader, desc="Training") as pbar:
         for specs, labels in pbar:
@@ -48,6 +55,8 @@ def train_epoch(
             all_labels.append(labels)
             
             total_loss += loss.item()
+            step += 1
+            global_step += 1
             
             # Calculate running metrics
             predictions = torch.cat(all_predictions)
@@ -64,20 +73,38 @@ def train_epoch(
                 'eer': f'{metrics["eer"]:.1f}%',
                 'auc': f'{metrics["auc"]:.3f}'
             })
+            
+            # Log to wandb every log_interval steps
+            if log_wandb and step % log_interval == 0:
+                batch_metrics = {
+                    f"train/{epoch}/step_loss": loss.item(),
+                    f"train/{epoch}/step_accuracy": accuracy,
+                    f"train/{epoch}/step_eer": metrics["eer"],
+                    f"train/{epoch}/step_auc": metrics["auc"],
+                    "epoch": epoch,
+                    "step": step,
+                    "global_step": global_step,
+                }
+                wandb.log(batch_metrics, step=global_step)
     
-    return total_loss / len(loader), accuracy, metrics
+    return total_loss / len(loader), accuracy, metrics, global_step
 
 def validate(
     model: nn.Module,
     loader: DataLoader,
     criterion: nn.Module,
-    device: str
+    device: str,
+    epoch: int,
+    global_step: int,
+    log_wandb: bool = False,
+    log_interval: int = 10
 ) -> Tuple[float, float, dict]:
     """Validate the model and compute metrics."""
     model.eval()
     total_loss = 0
     all_predictions = []
     all_labels = []
+    step = 0
     
     with torch.no_grad():
         with tqdm(loader, desc="Validation") as pbar:
@@ -92,6 +119,7 @@ def validate(
                 all_labels.append(labels)
                 
                 total_loss += loss.item()
+                step += 1
                 
                 # Calculate running metrics
                 predictions = torch.cat(all_predictions)
@@ -108,6 +136,19 @@ def validate(
                     'eer': f'{metrics["eer"]:.1f}%',
                     'auc': f'{metrics["auc"]:.3f}'
                 })
+                
+                # Log to wandb every log_interval steps
+                if log_wandb and step % log_interval == 0:
+                    batch_metrics = {
+                        f"val/{epoch}/step_loss": loss.item(),
+                        f"val/{epoch}/step_accuracy": accuracy,
+                        f"val/{epoch}/step_eer": metrics["eer"],
+                        f"val/{epoch}/step_auc": metrics["auc"],
+                        "epoch": epoch,
+                        "step": step,
+                        "global_step": global_step + step,
+                    }
+                    wandb.log(batch_metrics, step=global_step + step)
     
     return total_loss / len(loader), accuracy, metrics
 
@@ -130,7 +171,7 @@ def get_model(model_name: str, device: str, input_type: str = "spectrogram"):
     
     return model, config, num_classes
 
-def get_dataset(metadata_path: Path, input_type: str = "spectrogram"):
+def get_dataset(metadata_path: Path, input_type: str = "spectrogram", device: str = "cpu"):
     """Get appropriate dataset based on input type."""
     try:
         if (input_type == "raw"):
@@ -138,14 +179,15 @@ def get_dataset(metadata_path: Path, input_type: str = "spectrogram"):
             dataset = RawAudioDataset(
                 metadata_path=metadata_path,
                 sample_rate=16000,
-                duration=4.0
+                duration=4.0,
+                device=device
             )
             print(f"Found {len(dataset)} audio files")
             # Verify first file can be loaded
             _, _ = dataset[0]
             return dataset
         else:
-            return SpectrogramDataset(metadata_path)
+            return SpectrogramDataset(metadata_path, device=device)
     except Exception as e:
         raise RuntimeError(f"Failed to load dataset: {str(e)}")
 
@@ -161,16 +203,47 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    parser.add_argument("--wandb-project", type=str, default="deepfakes",
+                       help="Weights & Biases project name")
+    parser.add_argument("--wandb-entity", type=str, default=None,
+                       help="Weights & Biases entity (username or team)")
+    parser.add_argument("--disable-wandb", action="store_true",
+                       help="Disable Weights & Biases logging")
+    parser.add_argument("--log-interval", type=int, default=10,
+                       help="Interval for logging steps to wandb")
+    parser.add_argument("--device", type=str, choices=['cuda', 'cpu'],
+                       default='cuda' if torch.cuda.is_available() else 'cpu',
+                       help="Device to use for training")
     args = parser.parse_args()
     
     # Verify compatible model and input type
     if args.model == "specrnet" and args.input_type == "raw":
         raise ValueError("SpecRNet only supports spectrogram input")
     
-    # Configuration
-    device = "cpu"  # Force CPU usage
+    # Configuration - Replace existing device setting
+    device = args.device if args.device != 'cuda' or torch.cuda.is_available() else 'cpu'
+    if args.device == 'cuda' and not torch.cuda.is_available():
+        print("Warning: CUDA requested but not available. Using CPU instead.")
     print(f"\nUsing device: {device}")
     print(f"Selected model: {args.model}")
+    
+    # Initialize wandb if not disabled
+    run = None
+    if not args.disable_wandb:
+        run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            config={
+                "model": args.model,
+                "input_type": args.input_type,
+                "batch_size": args.batch_size,
+                "epochs": args.epochs,
+                "learning_rate": args.lr,
+                "device": device,
+                "log_interval": args.log_interval,
+                "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
+            }
+        )
     
     # Setup paths using absolute paths
     try:
@@ -196,7 +269,7 @@ def main():
     # Load appropriate dataset with error handling
     print(f"Loading dataset (type: {args.input_type})...")
     try:
-        dataset = get_dataset(metadata_path, args.input_type)
+        dataset = get_dataset(metadata_path, args.input_type, device=device)
         label_counts = dataset.get_label_counts()
         print("Label distribution:", label_counts)
     except Exception as e:
@@ -242,6 +315,10 @@ def main():
     print(f"Number of classes: {num_classes}")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     
+    # Log model architecture
+    if args.model == "specrnet" and run is not None:
+        wandb.config.update({"model_config": config.__dict__})
+    
     # Setup training
     criterion = nn.CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=args.lr)
@@ -255,19 +332,52 @@ def main():
     }
     
     print(f"\nStarting training on {device}...")
+    global_step = 0
     
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
         
         # Train
-        train_loss, train_acc, train_metrics = train_epoch(
-            model, train_loader, criterion, optimizer, device
+        train_loss, train_acc, train_metrics, global_step = train_epoch(
+            model, train_loader, criterion, optimizer, device, 
+            epoch, global_step, log_wandb=(run is not None), 
+            log_interval=args.log_interval
         )
         
         # Validate with metrics
         val_loss, val_acc, val_metrics = validate(
-            model, val_loader, criterion, device
+            model, val_loader, criterion, device, 
+            epoch, global_step, log_wandb=(run is not None),
+            log_interval=args.log_interval
         )
+        
+        # Log epoch summary metrics to wandb
+        if run is not None:
+            wandb.log({
+                "epoch": epoch,
+                f"train/{epoch}/loss": train_loss,
+                f"train/{epoch}/accuracy": train_acc,
+                f"train/{epoch}/eer": train_metrics["eer"],
+                f"train/{epoch}/auc": train_metrics["auc"],
+                f"val/{epoch}/loss": val_loss,
+                f"val/{epoch}/accuracy": val_acc,
+                f"val/{epoch}/eer": val_metrics["eer"],
+                f"val/{epoch}/auc": val_metrics["auc"],
+                "learning_rate": optimizer.param_groups[0]['lr'],
+                "global_step": global_step
+            }, step=global_step)
+            
+            # Also log to standard metrics for comparison across runs
+            wandb.log({
+                "train/loss": train_loss,
+                "train/accuracy": train_acc,
+                "train/eer": train_metrics["eer"],
+                "train/auc": train_metrics["auc"],
+                "val/loss": val_loss,
+                "val/accuracy": val_acc,
+                "val/eer": val_metrics["eer"],
+                "val/auc": val_metrics["auc"],
+            }, step=global_step)
         
         # Update learning rate
         scheduler.step(val_loss)
@@ -289,32 +399,11 @@ def main():
             # Create checkpoint name base
             checkpoint_base = f"{args.model}_epoch_{epoch+1:03d}_acc_{val_acc*100:.2f}_eer_{val_metrics['eer']:.2f}"
             
-            # Save checkpoint with detailed information
-            checkpoint = {
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'metrics': {
-                    'best': best_metrics,
-                    'current': {
-                        'train_loss': train_loss,
-                        'train_acc': train_acc,
-                        'val_loss': val_loss,
-                        'val_acc': val_acc,
-                        'eer': val_metrics['eer'],
-                        'auc': val_metrics['auc']
-                    }
-                },
-                'config': config,
-                'model_name': args.model,
-                'input_type': args.input_type,
-                'training_args': vars(args),
-                'timestamp': time.strftime("%Y%m%d-%H%M%S")
-            }
+            # Full checkpoint path with extension
+            checkpoint_path = save_dir / f"{checkpoint_base}.pt"
             
             # Save weights
-            torch.save(checkpoint, save_dir / f"{checkpoint_base}.pt")
+            torch.save(checkpoint, checkpoint_path)
             
             # For SpecRNet, also save architecture
             if args.model == "specrnet":
@@ -327,6 +416,25 @@ def main():
                 model.save_architecture(str(save_dir / f"{args.model}_best_arch.json"))
             
             print(f"New best model saved as {checkpoint_base}!")
+            
+            # Log best model to wandb
+            if run is not None:
+                artifact = wandb.Artifact(
+                    name=f"model-{run.id}",
+                    type="model",
+                    description=f"Best model from run {run.id}"
+                )
+                # Use the full path with extension
+                artifact.add_file(str(checkpoint_path))
+                run.log_artifact(artifact)
+                
+                # Log best metrics
+                wandb.run.summary.update({
+                    "best_val_acc": val_acc,
+                    "best_val_eer": val_metrics['eer'],
+                    "best_val_auc": val_metrics['auc'],
+                    "best_epoch": epoch
+                })
         
         # Print results
         print(f"\nResults:")
@@ -336,6 +444,10 @@ def main():
         print(f"Best - Acc: {best_metrics['val_acc']*100:.2f}%, "
               f"EER: {best_metrics['eer']:.2f}%, "
               f"AUC: {best_metrics['auc']:.4f}")
+    
+    # Finish wandb run
+    if run is not None:
+        wandb.finish()
 
 if __name__ == "__main__":
     main()

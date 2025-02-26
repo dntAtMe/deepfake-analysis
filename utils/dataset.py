@@ -9,16 +9,18 @@ from torch.utils.data import Dataset
 class SpectrogramDataset(Dataset):
     """Dataset for loading preprocessed spectrograms."""
     
-    def __init__(self, metadata_path: Path):
+    def __init__(self, metadata_path: Path, device: str = "cpu"):
         """Initialize dataset from metadata file.
         
         Args:
             metadata_path: Path to metadata.pt file containing file paths and labels
+            device: Device to load tensors onto ('cpu' or 'cuda')
         """
         data = torch.load(metadata_path)
         self.file_paths = [Path(p) for p in data['files']]
         self.labels = data['labels']
         self.label_mapping = data['label_mapping']
+        self.device = device
         
     def __len__(self) -> int:
         return len(self.labels)
@@ -27,7 +29,7 @@ class SpectrogramDataset(Dataset):
         """Load spectrogram and return with its label."""
         spec = torch.load(self.file_paths[idx])
         label = self.labels[idx]
-        return spec, label
+        return spec.to(self.device), label
     
     def get_label_counts(self) -> Dict[str, int]:
         """Return count of samples per class."""

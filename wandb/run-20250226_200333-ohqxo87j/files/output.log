@@ -1,0 +1,15 @@
+Loading dataset (type: spectrogram)...
+Label distribution: {'fake': 24072, 'genuine': 3012}
+Number of classes: 2
+Using batch size: 16
+
+Model configuration:
+Architecture: specrnet
+Input type: spectrogram
+Number of classes: 2
+Parameters: 278,092
+
+Starting training on cuda...
+
+Epoch 1/2
+Training:  40%|██   | 547/1355 [00:27<00:41, 19.53it/s, loss=0.008, acc=95.2%, eer=9.6%, auc=0.968]

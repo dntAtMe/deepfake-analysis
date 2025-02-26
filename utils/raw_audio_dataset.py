@@ -14,7 +14,8 @@ class RawAudioDataset(Dataset):
         self,
         metadata_path: Path,
         sample_rate: int = 16000,
-        duration: Optional[float] = 4.0  # Duration in seconds
+        duration: Optional[float] = 4.0,  # Duration in seconds
+        device: str = "cpu"
     ):
         """Initialize dataset from metadata file.
         
@@ -22,6 +23,7 @@ class RawAudioDataset(Dataset):
             metadata_path: Path to metadata.pt file containing file paths and labels
             sample_rate: Target sample rate
             duration: Target duration in seconds (None for variable length)
+            device: Device to load tensors onto ('cpu' or 'cuda')
         """
         data = torch.load(metadata_path)
         
@@ -50,6 +52,7 @@ class RawAudioDataset(Dataset):
         self.sample_rate = sample_rate
         self.duration = duration
         self.target_length = int(sample_rate * duration) if duration else None
+        self.device = device
         
     def __len__(self) -> int:
         return len(self.labels)
@@ -74,8 +77,8 @@ class RawAudioDataset(Dataset):
                     # Truncate long audio
                     audio = audio[:self.target_length]
             
-            # Convert to tensor
-            audio_tensor = torch.from_numpy(audio).float()
+            # Convert to tensor and move to device
+            audio_tensor = torch.from_numpy(audio).float().to(self.device)
             return audio_tensor, self.labels[idx]
             
         except Exception as e:

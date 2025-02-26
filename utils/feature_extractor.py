@@ -29,7 +29,8 @@ class FeatureExtractor:
         n_lfcc: int = 40,
         fmin: int = 20,
         fmax: int = 8000,
-        normalize: bool = True
+        normalize: bool = True,
+        device: str = "cpu"
     ):
         """Initialize feature extractor.
         
@@ -44,6 +45,7 @@ class FeatureExtractor:
             fmin: Minimum frequency
             fmax: Maximum frequency
             normalize: Whether to normalize features
+            device: Computation device ('cpu' or 'cuda')
         """
         self.feature_type = FeatureType(feature_type)
         self.sample_rate = sample_rate
@@ -55,6 +57,7 @@ class FeatureExtractor:
         self.fmin = fmin
         self.fmax = fmax
         self.normalize = normalize
+        self.device = device
         
         # Pre-compute filters
         if self.feature_type in [FeatureType.MFCC, FeatureType.MEL]:
@@ -193,17 +196,23 @@ class FeatureExtractor:
         if return_tensor:
             features = torch.from_numpy(features).float()
             features = features.unsqueeze(0)  # Add channel dimension
+            if self.device != "cpu":
+                features = features.to(self.device)
             
         return features
 
-if __name__ == "__main__":
+if __name__main__":
     # Example usage
     import matplotlib.pyplot as plt
     
+    # Use device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+    
     # Initialize extractors
-    mfcc_extractor = FeatureExtractor(feature_type="mfcc")
-    lfcc_extractor = FeatureExtractor(feature_type="lfcc")
-    mel_extractor = FeatureExtractor(feature_type="mel")
+    mfcc_extractor = FeatureExtractor(feature_type="mfcc", device=device)
+    lfcc_extractor = FeatureExtractor(feature_type="lfcc", device=device)
+    mel_extractor = FeatureExtractor(feature_type="mel", device=device)
     
     # Process example file
     audio_path = "e:/PWr/deepfakes/datasets/track1_2-train/Track1.2/train/wav/ADD2023_T1.2_T_00000000.wav"
@@ -213,6 +222,15 @@ if __name__ == "__main__":
         mfcc_features = mfcc_extractor.extract_features(audio_path, return_tensor=False)
         lfcc_features = lfcc_extractor.extract_features(audio_path, return_tensor=False)
         mel_features = mel_extractor.extract_features(audio_path, return_tensor=False)
+        
+        # For plotting, we need features on CPU
+        if device != "cpu":
+            mfcc_features_tensor = torch.from_numpy(mfcc_features).to(device)
+            lfcc_features_tensor = torch.from_numpy(lfcc_features).to(device)
+            mel_features_tensor = torch.from_numpy(mel_features).to(device)
+            
+            # Test device placement
+            print(f"MFCC tensor device: {mfcc_features_tensor.device}")
         
         # Remove channel dimension for plotting if present
         if mfcc_features.ndim == 3:

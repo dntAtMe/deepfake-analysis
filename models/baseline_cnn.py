@@ -32,10 +32,16 @@ class BaselineCNNConfig:
 class BaselineCNN(nn.Module):
     """Baseline CNN architecture for audio deepfake detection."""
     
-    def __init__(self, config: BaselineCNNConfig):
-        """Initialize the model."""
+    def __init__(self, config: BaselineCNNConfig, device: str = "cpu"):
+        """Initialize the model.
+        
+        Args:
+            config: Model configuration
+            device: Computation device ('cpu' or 'cuda')
+        """
         super().__init__()
         config.validate()
+        self.device = device
         
         # First convolutional block
         self.conv1 = nn.Sequential(
@@ -79,7 +85,8 @@ class BaselineCNN(nn.Module):
     
     def _calculate_flatten_size(self, channels: int, input_size: tuple) -> int:
         """Calculate the size of flattened features after convolutions."""
-        x = torch.zeros(1, channels, *input_size)
+        # Create a mock input tensor of the right size and device
+        x = torch.zeros(1, channels, *input_size, device=self.device)
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
@@ -114,9 +121,12 @@ def get_default_config(input_channels: int = 1) -> BaselineCNNConfig:
 
 
 if __name__ == "__main__":
-    # Test model
+    # Test model with GPU if available
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
+    
     config = get_default_config()
-    model = BaselineCNN(config)
+    model = BaselineCNN(config, device=device).to(device)
     
     # Print model summary
     print("Baseline CNN Model Summary:")
@@ -124,7 +134,9 @@ if __name__ == "__main__":
     print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     # Test forward pass
-    x = torch.randn(1, 1, 80, 404)  # Standard input size
+    x = torch.randn(1, 1, 80, 404, device=device)  # Standard input size
     y = model(x)
     print(f"\nInput shape: {x.shape}")
     print(f"Output shape: {y.shape}")
+    print(f"Input device: {x.device}")
+    print(f"Output device: {y.device}")

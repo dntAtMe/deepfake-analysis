@@ -1,0 +1,46 @@
+{
+  "os":  "Windows-10-10.0.19041-SP0",
+  "python":  "CPython 3.8.0",
+  "startedAt":  "2025-02-26T19:03:33.656325Z",
+  "args":  [
+    "--epochs",
+    "2"
+  ],
+  "program":  ".\\train.py",
+  "codePath":  "train.py",
+  "git":  {
+    "remote":  "https://github.com/dntAtMe/deepfake-analysis.git",
+    "commit":  "963303211dfa316d1a4888d42505148cf0d21768"
+  },
+  "email":  "dntatm3@gmail.com",
+  "root":  "E:\\PWr\\deepfakes",
+  "host":  "DESKTOP-CI1ACUR",
+  "executable":  "C:\\Users\\Kacper\\AppData\\Local\\Programs\\Python\\Python38\\python3.exe",
+  "codePathLocal":  "train.py",
+  "cpu_count":  6,
+  "cpu_count_logical":  12,
+  "gpu":  "NVIDIA GeForce RTX 3070 Ti",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "1000186310656",
+      "used":  "942795907072"
+    }
+  },
+  "memory":  {
+    "total":  "34308145152"
+  },
+  "cpu":  {
+    "count":  6,
+    "countLogical":  12
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 3070 Ti",
+      "memoryTotal":  "8589934592",
+      "cudaCores":  6144,
+      "architecture":  "Ampere"
+    }
+  ],
+  "cudaVersion":  "12.7"
+}
