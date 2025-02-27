@@ -208,13 +208,7 @@ class FeatureExtractor:
         save_path: Union[str, Path],
         filename: str
     ) -> None:
-        """Save extracted features as PNG files.
-        
-        Args:
-            features: Dictionary containing 'mel', 'mfcc', and 'lfcc' features
-            save_path: Directory to save the plots
-            filename: Base filename without extension
-        """
+        """Save extracted features as PNG files."""
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
         
@@ -230,32 +224,37 @@ class FeatureExtractor:
             hop_length=self.hop_length,
             fmin=self.fmin,
             fmax=self.fmax,
-            ax=ax1
+            ax=ax1,
+            cmap='magma'
         )
         ax1.set_title('Mel Spectrogram')
         fig.colorbar(img1, ax=ax1, format='%+2.0f dB')
         
-        # Plot MFCC
+        # Plot MFCC with specific settings
         img2 = librosa.display.specshow(
             features['mfcc'],
             x_axis='time',
+            y_axis='mel',  # Changed from default
             sr=self.sample_rate,
             hop_length=self.hop_length,
-            ax=ax2
+            ax=ax2,
+            cmap='magma'  # Added colormap
         )
         ax2.set_title('MFCC')
-        fig.colorbar(img2, ax=ax2, format='%+2.0f')
+        fig.colorbar(img2, ax=ax2)
         
-        # Plot LFCC
+        # Plot LFCC with specific settings
         img3 = librosa.display.specshow(
             features['lfcc'],
             x_axis='time',
+            y_axis='linear',  # Changed to linear
             sr=self.sample_rate,
             hop_length=self.hop_length,
-            ax=ax3
+            ax=ax3,
+            cmap='magma'  # Added colormap
         )
         ax3.set_title('LFCC')
-        fig.colorbar(img3, ax=ax3, format='%+2.0f')
+        fig.colorbar(img3, ax=ax3)
         
         plt.tight_layout()
         
@@ -270,22 +269,37 @@ class FeatureExtractor:
         save_path: Union[str, Path],
         filename: str
     ) -> None:
-        """Save each feature type as a separate image without plot decorations.
-        
-        Args:
-            features: Dictionary containing 'mel', 'mfcc', and 'lfcc' features
-            save_path: Directory to save the images
-            filename: Base filename without extension
-        """
+        """Save each feature type as a separate image without plot decorations."""
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
         
+        # Visualization settings for each feature type
+        viz_settings = {
+            'mel': {
+                'cmap': 'magma',
+                'aspect': 'auto',
+                'origin': 'lower',
+                'interpolation': 'nearest'
+            },
+            'mfcc': {
+                'cmap': 'magma',
+                'aspect': 'auto',
+                'origin': 'lower',
+                'interpolation': 'nearest'
+            },
+            'lfcc': {
+                'cmap': 'magma',
+                'aspect': 'auto',
+                'origin': 'lower',
+                'interpolation': 'nearest'
+            }
+        }
+        
         # Save each feature type separately
         for feature_name, feature_data in features.items():
-            # Create figure with only the feature image
             plt.figure(figsize=(12, 4))
-            plt.imshow(feature_data, aspect='auto', origin='lower')
-            plt.axis('off')  # Remove axes
+            plt.imshow(feature_data, **viz_settings[feature_name])
+            plt.axis('off')
             
             # Save without plot decorations
             save_file = save_path / f"{filename}_{feature_name}.png"
