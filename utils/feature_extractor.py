@@ -8,6 +8,7 @@ import librosa
 import torch
 from torch import Tensor
 import scipy.fftpack
+import argparse
 
 class FeatureType(Enum):
     """Supported feature types."""
@@ -201,9 +202,112 @@ class FeatureExtractor:
             
         return features
 
-if __name__main__":
+    def save_features_plot(
+        self,
+        features: dict,
+        save_path: Union[str, Path],
+        filename: str
+    ) -> None:
+        """Save extracted features as PNG files.
+        
+        Args:
+            features: Dictionary containing 'mel', 'mfcc', and 'lfcc' features
+            save_path: Directory to save the plots
+            filename: Base filename without extension
+        """
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        
+        # Create figure
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12))
+        
+        # Plot Mel Spectrogram
+        img1 = librosa.display.specshow(
+            features['mel'],
+            x_axis='time',
+            y_axis='mel',
+            sr=self.sample_rate,
+            hop_length=self.hop_length,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            ax=ax1
+        )
+        ax1.set_title('Mel Spectrogram')
+        fig.colorbar(img1, ax=ax1, format='%+2.0f dB')
+        
+        # Plot MFCC
+        img2 = librosa.display.specshow(
+            features['mfcc'],
+            x_axis='time',
+            sr=self.sample_rate,
+            hop_length=self.hop_length,
+            ax=ax2
+        )
+        ax2.set_title('MFCC')
+        fig.colorbar(img2, ax=ax2, format='%+2.0f')
+        
+        # Plot LFCC
+        img3 = librosa.display.specshow(
+            features['lfcc'],
+            x_axis='time',
+            sr=self.sample_rate,
+            hop_length=self.hop_length,
+            ax=ax3
+        )
+        ax3.set_title('LFCC')
+        fig.colorbar(img3, ax=ax3, format='%+2.0f')
+        
+        plt.tight_layout()
+        
+        # Save plot
+        save_file = save_path / f"{filename}_features.png"
+        plt.savefig(save_file, dpi=300, bbox_inches='tight')
+        plt.close()
+
+    def save_individual_features(
+        self,
+        features: dict,
+        save_path: Union[str, Path],
+        filename: str
+    ) -> None:
+        """Save each feature type as a separate image without plot decorations.
+        
+        Args:
+            features: Dictionary containing 'mel', 'mfcc', and 'lfcc' features
+            save_path: Directory to save the images
+            filename: Base filename without extension
+        """
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        
+        # Save each feature type separately
+        for feature_name, feature_data in features.items():
+            # Create figure with only the feature image
+            plt.figure(figsize=(12, 4))
+            plt.imshow(feature_data, aspect='auto', origin='lower')
+            plt.axis('off')  # Remove axes
+            
+            # Save without plot decorations
+            save_file = save_path / f"{filename}_{feature_name}.png"
+            plt.savefig(
+                save_file,
+                dpi=300,
+                bbox_inches='tight',
+                pad_inches=0
+            )
+            plt.close()
+
+if __name__ == "__main__":
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='Extract and save audio features')
+    parser.add_argument('--split', action='store_true', 
+                      help='Save features as separate images instead of combined plot')
+    args = parser.parse_args()
+
     # Example usage
     import matplotlib.pyplot as plt
+    from env_setup import setup_environment
+    setup_environment()
     
     # Use device
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -214,80 +318,68 @@ if __name__main__":
     lfcc_extractor = FeatureExtractor(feature_type="lfcc", device=device)
     mel_extractor = FeatureExtractor(feature_type="mel", device=device)
     
-    # Process example file
-    audio_path = "e:/PWr/deepfakes/datasets/track1_2-train/Track1.2/train/wav/ADD2023_T1.2_T_00000000.wav"
+    metadata_path = Path("e:/PWr/deepfakes/datasets/track1_2-train/Track1.2/train/spect/metadata.pt")
+    data = torch.load(metadata_path)
+    file_paths = [Path(p) for p in data['files']]
+    labels = data['labels']
+    label_mapping = data['label_mapping']
+
+    wav_dir = metadata_path.parent.parent / "wav"
+    if not wav_dir.exists():
+        raise FileNotFoundError(f"WAV directory not found: {wav_dir}")
     
-    try:
-        # Extract all features without tensor conversion
-        mfcc_features = mfcc_extractor.extract_features(audio_path, return_tensor=False)
-        lfcc_features = lfcc_extractor.extract_features(audio_path, return_tensor=False)
-        mel_features = mel_extractor.extract_features(audio_path, return_tensor=False)
+    # Create output directory for feature plots
+    output_dir = Path("e:/PWr/deepfakes/features")
+    if args.split:
+        output_dir = output_dir / "split"
+    output_dir.mkdir(parents=True, exist_ok=True)
         
-        # For plotting, we need features on CPU
-        if device != "cpu":
-            mfcc_features_tensor = torch.from_numpy(mfcc_features).to(device)
-            lfcc_features_tensor = torch.from_numpy(lfcc_features).to(device)
-            mel_features_tensor = torch.from_numpy(mel_features).to(device)
+    # Map spectrogram paths to WAV paths
+    wav_paths = [
+        wav_dir / f"{Path(p).stem}.wav" 
+        for p in data['files']
+    ]
+
+    for audio_path in wav_paths:
+        try:
+            # Extract all features without tensor conversion
+            mfcc_features = mfcc_extractor.extract_features(audio_path, return_tensor=False)
+            lfcc_features = lfcc_extractor.extract_features(audio_path, return_tensor=False)
+            mel_features = mel_extractor.extract_features(audio_path, return_tensor=False)
             
-            # Test device placement
-            print(f"MFCC tensor device: {mfcc_features_tensor.device}")
-        
-        # Remove channel dimension for plotting if present
-        if mfcc_features.ndim == 3:
-            mfcc_features = mfcc_features.squeeze(0)
-        if lfcc_features.ndim == 3:
-            lfcc_features = lfcc_features.squeeze(0)
-        if mel_features.ndim == 3:
-            mel_features = mel_features.squeeze(0)
-        
-        # Plot features
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12))
-        
-        # Plot Mel Spectrogram
-        img1 = librosa.display.specshow(
-            mel_features,
-            x_axis='time',
-            y_axis='mel',
-            sr=mel_extractor.sample_rate,
-            hop_length=mel_extractor.hop_length,
-            fmin=mel_extractor.fmin,
-            fmax=mel_extractor.fmax,
-            ax=ax1
-        )
-        ax1.set_title('Mel Spectrogram')
-        fig.colorbar(img1, ax=ax1, format='%+2.0f dB')
-        
-        # Plot MFCC
-        img2 = librosa.display.specshow(
-            mfcc_features,
-            x_axis='time',
-            sr=mfcc_extractor.sample_rate,
-            hop_length=mfcc_extractor.hop_length,
-            ax=ax2
-        )
-        ax2.set_title('MFCC')
-        fig.colorbar(img2, ax=ax2, format='%+2.0f')
-        
-        # Plot LFCC
-        img3 = librosa.display.specshow(
-            lfcc_features,
-            x_axis='time',
-            sr=lfcc_extractor.sample_rate,
-            hop_length=lfcc_extractor.hop_length,
-            ax=ax3
-        )
-        ax3.set_title('LFCC')
-        fig.colorbar(img3, ax=ax3, format='%+2.0f')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Print shapes before channel dimension addition
-        print(f"Mel Spectrogram shape: {mel_features.shape}")
-        print(f"MFCC shape: {mfcc_features.shape}")
-        print(f"LFCC shape: {lfcc_features.shape}")
-        
-    except FileNotFoundError:
-        print("Please provide a valid audio file path")
-    except Exception as e:
-        print(f"Error during processing: {str(e)}")
+            # Remove channel dimension if present
+            if mfcc_features.ndim == 3:
+                mfcc_features = mfcc_features.squeeze(0)
+            if lfcc_features.ndim == 3:
+                lfcc_features = lfcc_features.squeeze(0)
+            if mel_features.ndim == 3:
+                mel_features = mel_features.squeeze(0)
+            
+            # Create features dictionary
+            features_dict = {
+                'mel': mel_features,
+                'mfcc': mfcc_features,
+                'lfcc': lfcc_features
+            }
+            
+            # Save features based on split argument
+            if args.split:
+                mel_extractor.save_individual_features(
+                    features_dict,
+                    output_dir,
+                    audio_path.stem
+                )
+            else:
+                mel_extractor.save_features_plot(
+                    features_dict,
+                    output_dir,
+                    audio_path.stem
+                )
+            
+            print(f"Saved features {'separately' if args.split else 'as plot'} for {audio_path.stem}")
+            
+        except FileNotFoundError:
+            print(f"File not found: {audio_path}")
+        except Exception as e:
+            print(f"Error processing {audio_path}: {str(e)}")
+

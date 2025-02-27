@@ -214,6 +214,8 @@ def main():
     parser.add_argument("--device", type=str, choices=['cuda', 'cpu'],
                        default='cuda' if torch.cuda.is_available() else 'cpu',
                        help="Device to use for training")
+    parser.add_argument("--runs", type=int, default=1,
+                       help="Number of training runs to perform")
     args = parser.parse_args()
     
     # Verify compatible model and input type
@@ -228,24 +230,6 @@ def main():
     print(f"Selected model: {args.model}")
     
     wandb_project = args.wandb_project
-    
-    run = None
-    if not args.disable_wandb:
-        run = wandb.init(
-            project=wandb_project,
-            entity=args.wandb_entity,
-            name=f"{args.model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            config={
-                "model": args.model,
-                "input_type": args.input_type,
-                "batch_size": args.batch_size,
-                "epochs": args.epochs,
-                "learning_rate": args.lr,
-                "device": device,
-                "log_interval": args.log_interval,
-                "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
-            }
-        )
     
     # Setup paths using absolute paths
     try:
@@ -289,179 +273,217 @@ def main():
     # Split dataset
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_size, val_size]
-    )
     
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=0  # Reduced for CPU
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=0  # Reduced for CPU
-    )
-    
-    # Get model
-    model, config, num_classes = get_model(args.model, device, input_type=args.input_type)
-    model = model.to(device)
-    
-    # Now log model architecture AFTER model is created
-    if args.model == "specrnet" and run is not None:
-        wandb.config.update({"model_config": config.__dict__})
-    
-    print("\nModel configuration:")
-    print(f"Architecture: {args.model}")
-    print(f"Input type: {args.input_type}")
-    print(f"Number of classes: {num_classes}")
-    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Setup training
-    criterion = nn.CrossEntropyLoss()
-    optimizer = Adam(model.parameters(), lr=args.lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, verbose=True)
-    
-    # Training loop
-    best_metrics = {
-        'val_acc': 0,
-        'eer': float('inf'),
-        'auc': 0
-    }
-    
-    print(f"\nStarting training on {device}...")
-    step_count = 0
-    
-    for epoch in range(args.epochs):
-        print(f"\nEpoch {epoch+1}/{args.epochs}")
+    # Run training for the specified number of runs
+    for run_idx in range(args.runs):
+        print(f"\n\n======== Starting Run {run_idx + 1}/{args.runs} ========\n")
         
-        # Train
-        train_loss, train_acc, train_metrics, step_count = train_epoch(
-            model, train_loader, criterion, optimizer, device, 
-            epoch, step_count, log_wandb=(run is not None), 
-            log_interval=args.log_interval
+        # Create a new train-val split for each run
+        train_dataset, val_dataset = torch.utils.data.random_split(
+            dataset, [train_size, val_size]
         )
         
-        # Validate with metrics
-        val_loss, val_acc, val_metrics = validate(
-            model, val_loader, criterion, device, 
-            epoch, step_count, log_wandb=(run is not None),
-            log_interval=args.log_interval
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0  # Reduced for CPU
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0  # Reduced for CPU
         )
         
-        # Log epoch summary metrics to wandb
-        if run is not None:
-            wandb.log({
-                "epoch": epoch + 1,
-                "train/epoch_loss": train_loss,
-                "train/epoch_accuracy": train_acc,
-                "train/epoch_eer": train_metrics["eer"],
-                "train/epoch_auc": train_metrics["auc"],
-                "val/epoch_loss": val_loss,
-                "val/epoch_accuracy": val_acc,
-                "val/epoch_eer": val_metrics["eer"],
-                "val/epoch_auc": val_metrics["auc"],
-                "learning_rate": optimizer.param_groups[0]['lr'],
-                "global_step": step_count
-            }, step=step_count)
-        
-        # Update learning rate
-        scheduler.step(val_loss)
-        
-        # Save best model based on multiple metrics
-        improved = (
-            val_acc > best_metrics['val_acc'] or
-            val_metrics['eer'] < best_metrics['eer'] or
-            val_metrics['auc'] > best_metrics['auc']
-        )
-        
-        if improved:
-            best_metrics.update({
-                'val_acc': val_acc,
-                'eer': val_metrics['eer'],
-                'auc': val_metrics['auc']
-            })
-            
-            # Create checkpoint name base
-            checkpoint_base = f"{args.model}_epoch_{epoch+1:03d}_acc_{val_acc*100:.2f}_eer_{val_metrics['eer']:.2f}"
-            
-            # Full checkpoint path with extension
-            checkpoint_path = save_dir / f"{checkpoint_base}.pt"
-            
-            # Create checkpoint dictionary with detailed information
-            checkpoint = {
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'metrics': {
-                    'best': best_metrics,
-                    'current': {
-                        'train_loss': train_loss,
-                        'train_acc': train_acc,
-                        'val_loss': val_loss,
-                        'val_acc': val_acc,
-                        'eer': val_metrics['eer'],
-                        'auc': val_metrics['auc']
-                    }
+        # Initialize wandb for this run
+        run = None
+        if not args.disable_wandb:
+            run_name = f"{args.model}_run{run_idx+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            run = wandb.init(
+                project=wandb_project,
+                entity=args.wandb_entity,
+                name=run_name,
+                config={
+                    "model": args.model,
+                    "input_type": args.input_type,
+                    "batch_size": args.batch_size,
+                    "epochs": args.epochs,
+                    "learning_rate": args.lr,
+                    "device": device,
+                    "log_interval": args.log_interval,
+                    "run_number": run_idx + 1,
+                    "total_runs": args.runs,
+                    "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S")
                 },
-                'config': config,
-                'model_name': args.model,
-                'input_type': args.input_type,
-                'training_args': vars(args),
-                'timestamp': time.strftime("%Y%m%d-%H%M%S")
-            }
-            
-            # Save weights
-            torch.save(checkpoint, checkpoint_path)
-            
-            # For SpecRNet, also save architecture
-            if args.model == "specrnet":
-                architecture_path = save_dir / f"{checkpoint_base}_arch.json"
-                model.save_architecture(str(architecture_path))
-            
-            # Save as latest best model
-            torch.save(checkpoint, save_dir / f"{args.model}_best.pt")
-            if args.model == "specrnet":
-                model.save_architecture(str(save_dir / f"{args.model}_best_arch.json"))
-            
-            print(f"New best model saved as {checkpoint_base}!")
-            
-            # Log best model to wandb
-            if run is not None:
-                artifact = wandb.Artifact(
-                    name=f"model-{run.id}-epoch-{epoch+1}",
-                    type="model",
-                    description=f"Best model from epoch {epoch+1}"
-                )
-                # Use the full path with extension
-                artifact.add_file(str(checkpoint_path))
-                run.log_artifact(artifact)
-                
-                # Log best metrics
-                wandb.run.summary.update({
-                    "best_val_acc": val_acc,
-                    "best_val_eer": val_metrics['eer'],
-                    "best_val_auc": val_metrics['auc'],
-                    "best_epoch": epoch + 1
-                })
+                # Ensure we create a new run each time
+                reinit=True
+            )
         
-        # Print results
-        print(f"\nResults:")
-        print(f"Train Loss: {train_loss:.4f}, Acc: {train_acc*100:.2f}%")
-        print(f"Val Loss: {val_loss:.4f}, Acc: {val_acc*100:.2f}%")
-        print(f"EER: {val_metrics['eer']:.2f}%, AUC: {val_metrics['auc']:.4f}")
-        print(f"Best - Acc: {best_metrics['val_acc']*100:.2f}%, "
-              f"EER: {best_metrics['eer']:.2f}%, "
-              f"AUC: {best_metrics['auc']:.4f}")
-    
-    # Finish wandb run
-    if run is not None:
-        run.finish()
+        # Get model
+        model, config, num_classes = get_model(args.model, device, input_type=args.input_type)
+        model = model.to(device)
+        
+        # Now log model architecture AFTER model is created
+        if args.model == "specrnet" and run is not None:
+            wandb.config.update({"model_config": config.__dict__})
+        
+        print("\nModel configuration:")
+        print(f"Architecture: {args.model}")
+        print(f"Input type: {args.input_type}")
+        print(f"Number of classes: {num_classes}")
+        print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+        
+        # Setup training
+        criterion = nn.CrossEntropyLoss()
+        optimizer = Adam(model.parameters(), lr=args.lr)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, verbose=True)
+        
+        # Training loop
+        best_metrics = {
+            'val_acc': 0,
+            'eer': float('inf'),
+            'auc': 0
+        }
+        
+        print(f"\nStarting training on {device}...")
+        step_count = 0
+        
+        for epoch in range(args.epochs):
+            print(f"\nEpoch {epoch+1}/{args.epochs}")
+            
+            # Train
+            train_loss, train_acc, train_metrics, step_count = train_epoch(
+                model, train_loader, criterion, optimizer, device, 
+                epoch, step_count, log_wandb=(run is not None), 
+                log_interval=args.log_interval
+            )
+            
+            # Validate with metrics
+            val_loss, val_acc, val_metrics = validate(
+                model, val_loader, criterion, device, 
+                epoch, step_count, log_wandb=(run is not None),
+                log_interval=args.log_interval
+            )
+            
+            # Log epoch summary metrics to wandb
+            if run is not None:
+                wandb.log({
+                    "epoch": epoch + 1,
+                    "train/epoch_loss": train_loss,
+                    "train/epoch_accuracy": train_acc,
+                    "train/epoch_eer": train_metrics["eer"],
+                    "train/epoch_auc": train_metrics["auc"],
+                    "val/epoch_loss": val_loss,
+                    "val/epoch_accuracy": val_acc,
+                    "val/epoch_eer": val_metrics["eer"],
+                    "val/epoch_auc": val_metrics["auc"],
+                    "learning_rate": optimizer.param_groups[0]['lr'],
+                    "global_step": step_count
+                }, step=step_count)
+            
+            # Update learning rate
+            scheduler.step(val_loss)
+            
+            # Save best model based on multiple metrics
+            improved = (
+                val_acc > best_metrics['val_acc'] or
+                val_metrics['eer'] < best_metrics['eer'] or
+                val_metrics['auc'] > best_metrics['auc']
+            )
+            
+            if improved:
+                best_metrics.update({
+                    'val_acc': val_acc,
+                    'eer': val_metrics['eer'],
+                    'auc': val_metrics['auc']
+                })
+                
+                # Create checkpoint name base with run index
+                checkpoint_base = f"{args.model}_run{run_idx+1}_epoch_{epoch+1:03d}_acc_{val_acc*100:.2f}_eer_{val_metrics['eer']:.2f}"
+                
+                # Full checkpoint path with extension
+                checkpoint_path = save_dir / f"{checkpoint_base}.pt"
+                
+                # Create checkpoint dictionary with detailed information
+                checkpoint = {
+                    'epoch': epoch,
+                    'run': run_idx + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'metrics': {
+                        'best': best_metrics,
+                        'current': {
+                            'train_loss': train_loss,
+                            'train_acc': train_acc,
+                            'val_loss': val_loss,
+                            'val_acc': val_acc,
+                            'eer': val_metrics['eer'],
+                            'auc': val_metrics['auc']
+                        }
+                    },
+                    'config': config,
+                    'model_name': args.model,
+                    'input_type': args.input_type,
+                    'training_args': vars(args),
+                    'timestamp': time.strftime("%Y%m%d-%H%M%S")
+                }
+                
+                # Save weights
+                torch.save(checkpoint, checkpoint_path)
+                
+                # For SpecRNet, also save architecture
+                if args.model == "specrnet":
+                    architecture_path = save_dir / f"{checkpoint_base}_arch.json"
+                    model.save_architecture(str(architecture_path))
+                
+                # Save as latest best model for this run
+                torch.save(checkpoint, save_dir / f"{args.model}_run{run_idx+1}_best.pt")
+                if args.model == "specrnet":
+                    model.save_architecture(str(save_dir / f"{args.model}_run{run_idx+1}_best_arch.json"))
+                
+                print(f"New best model saved as {checkpoint_base}!")
+                
+                # Log best model to wandb
+                if run is not None:
+                    artifact = wandb.Artifact(
+                        name=f"model-run{run_idx+1}-{run.id}-epoch-{epoch+1}",
+                        type="model",
+                        description=f"Best model from run {run_idx+1}, epoch {epoch+1}"
+                    )
+                    # Use the full path with extension
+                    artifact.add_file(str(checkpoint_path))
+                    run.log_artifact(artifact)
+                    
+                    # Log best metrics
+                    wandb.run.summary.update({
+                        "best_val_acc": val_acc,
+                        "best_val_eer": val_metrics['eer'],
+                        "best_val_auc": val_metrics['auc'],
+                        "best_epoch": epoch + 1
+                    })
+            
+            # Print results
+            print(f"\nResults:")
+            print(f"Train Loss: {train_loss:.4f}, Acc: {train_acc*100:.2f}%")
+            print(f"Val Loss: {val_loss:.4f}, Acc: {val_acc*100:.2f}%")
+            print(f"EER: {val_metrics['eer']:.2f}%, AUC: {val_metrics['auc']:.4f}")
+            print(f"Best - Acc: {best_metrics['val_acc']*100:.2f}%, "
+                  f"EER: {best_metrics['eer']:.2f}%, "
+                  f"AUC: {best_metrics['auc']:.4f}")
+        
+        # Finish wandb run for this iteration
+        if run is not None:
+            wandb.finish()
+            
+        print(f"\n======== Completed Run {run_idx + 1}/{args.runs} ========\n")
+        
+        # For multiple runs, add a short pause between runs
+        if args.runs > 1 and run_idx < args.runs - 1:
+            print(f"Waiting a moment before starting next run...")
+            time.sleep(2)  # Short pause between runs
 
 if __name__ == "__main__":
     main()
