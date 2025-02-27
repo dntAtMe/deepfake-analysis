@@ -135,7 +135,7 @@ def main():
     # Save a sample visualization
     try:
         import matplotlib.pyplot as plt
-        sample_spec = torch.load(processed_files[0])
+        sample_spec = torch.load(processed_files[0], weights_only=True)
         plt.figure(figsize=(10, 4))
         plt.imshow(sample_spec[0], aspect='auto', origin='lower')
         plt.colorbar(format='%+2.0f dB')

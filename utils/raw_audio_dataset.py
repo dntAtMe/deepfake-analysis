@@ -25,7 +25,7 @@ class RawAudioDataset(Dataset):
             duration: Target duration in seconds (None for variable length)
             device: Device to load tensors onto ('cpu' or 'cuda')
         """
-        data = torch.load(metadata_path)
+        data = torch.load(metadata_path, weights_only=True)
         
         # Get wav directory from metadata path
         wav_dir = metadata_path.parent.parent / "wav"

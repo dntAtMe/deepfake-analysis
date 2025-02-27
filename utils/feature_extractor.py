@@ -333,7 +333,7 @@ if __name__ == "__main__":
     mel_extractor = FeatureExtractor(feature_type="mel", device=device)
     
     metadata_path = Path("e:/PWr/deepfakes/datasets/track1_2-train/Track1.2/train/spect/metadata.pt")
-    data = torch.load(metadata_path)
+    data = torch.load(metadata_path, weights_only=True)
     file_paths = [Path(p) for p in data['files']]
     labels = data['labels']
     label_mapping = data['label_mapping']

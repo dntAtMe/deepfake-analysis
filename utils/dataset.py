@@ -16,7 +16,7 @@ class SpectrogramDataset(Dataset):
             metadata_path: Path to metadata.pt file containing file paths and labels
             device: Device to load tensors onto ('cpu' or 'cuda')
         """
-        data = torch.load(metadata_path)
+        data = torch.load(metadata_path, weights_only=True)
         self.file_paths = [Path(p) for p in data['files']]
         self.labels = data['labels']
         self.label_mapping = data['label_mapping']
@@ -27,7 +27,7 @@ class SpectrogramDataset(Dataset):
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
         """Load spectrogram and return with its label."""
-        spec = torch.load(self.file_paths[idx])
+        spec = torch.load(self.file_paths[idx], weights_only=True)
         label = self.labels[idx]
         return spec.to(self.device), label
     

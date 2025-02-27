@@ -210,7 +210,7 @@ class SpecRNet(nn.Module):
         
         # Load weights if provided
         if weights_path:
-            checkpoint = torch.load(weights_path)
+            checkpoint = torch.load(weights_path, weights_only=True)
             model.load_state_dict(checkpoint['model_state_dict'])
         
         return model
