@@ -1,7 +1,7 @@
 import os
 import pytest
 import pandas as pd
-from utils.dataset.inthewild_extractor import extract_labels, extract_audio_files, dataset_path, metadata_path
+from utils.dataset.inthewild_extractor import extract_labels, extract_audio_files, dataset_path
 
 @pytest.fixture
 def mock_metadata(tmp_path, monkeypatch):
@@ -85,4 +85,4 @@ def test_extract_audio_files_empty_file(tmp_path, monkeypatch):
     
     # Get audio files
     audio_files = extract_audio_files()
-    assert len(audio_files) == 0 
+    assert len(audio_files) == 0
